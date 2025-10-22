@@ -1,0 +1,9 @@
+{
+  "name": "Glitch",
+  "short_name": "Glitch",
+  "display": "standalone",
+  "start_url": "/",
+  "background_color": "#020617",
+  "theme_color": "#38bdf8",
+  "icons": []
+}
