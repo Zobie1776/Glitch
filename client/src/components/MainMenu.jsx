@@ -100,6 +100,14 @@ export default function MainMenu({ user, onLogin, onRegister, onLogout, onStart,
           <p className="text-sm text-red-100">Try again or return to the main menu.</p>
         </div>
       )}
+      {screen === 'ascended' && (
+        <div className="mt-6 p-4 bg-emerald-500/10 border border-emerald-500/40 rounded">
+          <h2 className="font-semibold text-emerald-200">Ascension Complete</h2>
+          <p className="text-sm text-emerald-100">
+            You shattered the Rift on level 50. Dive back in to chase leaderboard glory.
+          </p>
+        </div>
+      )}
     </section>
   );
 }

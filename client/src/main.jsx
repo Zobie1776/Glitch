@@ -4,12 +4,14 @@ import { startGame, destroyGame, onLevelComplete, onPlayerDeath } from './game/i
 import MainMenu from './components/MainMenu.jsx';
 import HUD from './components/HUD.jsx';
 import { AuthProvider, useAuth } from './state/useAuth.js';
+import { SettingsProvider, useSettings } from './state/useSettings.js';
 import './styles/tailwind.css';
 
 function AppShell() {
   const { user, login, register, logout, loadSession } = useAuth();
+  const { settings } = useSettings();
   const [screen, setScreen] = useState('menu');
-  const [sessionStats, setSessionStats] = useState({ level: 1, gems: 0 });
+  const [sessionStats, setSessionStats] = useState({ level: 1, gems: 0, ascended: false });
 
   useEffect(() => {
     loadSession();
@@ -17,8 +19,12 @@ function AppShell() {
 
   useEffect(() => {
     const cleanupComplete = onLevelComplete((payload) => {
-      setSessionStats({ level: payload.level, gems: payload.gems });
-      setScreen('menu');
+      setSessionStats({ level: payload.level, gems: payload.gems, ascended: payload.ascended ?? false });
+      if (payload.ascended) {
+        setScreen('ascended');
+      } else {
+        setScreen('menu');
+      }
     });
     const cleanupDeath = onPlayerDeath(() => {
       setScreen('death');
@@ -29,8 +35,14 @@ function AppShell() {
     };
   }, []);
 
+  useEffect(() => {
+    if (screen === 'game') {
+      startGame({ mountId: 'game-root', onSession: setSessionStats, settings });
+    }
+  }, [screen, settings]);
+
   const handleStart = async () => {
-    await startGame({ mountId: 'game-root', onSession: setSessionStats });
+    await startGame({ mountId: 'game-root', onSession: setSessionStats, settings });
     setScreen('game');
   };
 
@@ -55,9 +67,11 @@ function AppShell() {
 
 function App() {
   return (
-    <AuthProvider>
-      <AppShell />
-    </AuthProvider>
+    <SettingsProvider>
+      <AuthProvider>
+        <AppShell />
+      </AuthProvider>
+    </SettingsProvider>
   );
 }
 

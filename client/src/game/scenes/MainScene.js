@@ -3,6 +3,7 @@ import { emitLevelComplete, emitPlayerDeath } from '../events.js';
 import { loadProgress } from '../../state/saveManager.js';
 import { ENEMY_VARIANTS, resolveEnemyVariant } from '../data/enemyVariants.js';
 import { createBossProjectilePattern, getBossForLevel } from '../data/bosses.js';
+import { getLevelLayout } from '../data/levels.js';
 
 const EnemyState = Object.freeze({
   PATROL: 'patrol',
@@ -10,6 +11,8 @@ const EnemyState = Object.freeze({
   ATTACK: 'attack',
   STUNNED: 'stunned',
 });
+
+const DEFAULT_SETTINGS = { music: true, sfx: true, showDamage: true };
 
 export default class MainScene extends Phaser.Scene {
   constructor() {
@@ -21,40 +24,71 @@ export default class MainScene extends Phaser.Scene {
     this.glitchSkillGroup = null;
     this.gemsGroup = null;
     this.level = 1;
+    this.maxLevels = 50;
     this.gems = 0;
     this.uiText = null;
     this.playerStats = null;
     this.glitchSkill = null;
     this.pendingLevelTransition = false;
+    this.portal = null;
+    this.portalActive = false;
+    this.platforms = null;
+    this.currentLayout = null;
+    this.music = null;
+    this.sfx = {};
+    this.settings = { ...DEFAULT_SETTINGS };
+    this.mobileControls = [];
+    this.mobileInput = {
+      left: false,
+      right: false,
+      jumpTap: false,
+      meleeTap: false,
+      rangedTap: false,
+    };
   }
 
   async init() {
     const progress = await loadProgress();
     if (progress) {
-      this.level = Math.max(1, progress.level ?? 1);
+      this.level = Phaser.Math.Clamp(progress.level ?? 1, 1, this.maxLevels);
       this.gems = progress.gems ?? 0;
     }
+    this.settings = { ...DEFAULT_SETTINGS, ...(this.game.registry.get('settings') ?? {}) };
   }
 
   preload() {
     this.load.image('player', 'https://labs.phaser.io/assets/sprites/phaser-dude.png');
     this.load.image('enemy', 'https://labs.phaser.io/assets/sprites/red_ball.png');
     this.load.image('gem', 'https://labs.phaser.io/assets/sprites/gem.png');
+    this.load.image('platform', 'https://labs.phaser.io/assets/sprites/platform.png');
+    this.load.image('portal', 'https://labs.phaser.io/assets/sprites/exit.png');
+    this.load.audio('bgm_neon', 'https://labs.phaser.io/assets/audio/tech/loop.ogg');
+    this.load.audio('sfx_melee', 'https://labs.phaser.io/assets/audio/SoundEffects/punch.wav');
+    this.load.audio('sfx_pickup', 'https://labs.phaser.io/assets/audio/SoundEffects/p-ping.mp3');
+    this.load.audio('sfx_glitch', 'https://labs.phaser.io/assets/audio/SoundEffects/powerup8.mp3');
   }
 
   create() {
-    this.player = this.physics.add.sprite(480, 270, 'player');
+    this.physics.world.setBounds(0, 0, 960, 540);
+    this.cameras.main.setBounds(0, 0, 960, 540);
+    this.cameras.main.setBackgroundColor('#05030a');
+
+    this.player = this.physics.add.sprite(120, 420, 'player');
     this.player.setCollideWorldBounds(true);
-    this.player.setDrag(400, 400);
+    this.player.setDragX(1200);
+    this.player.setBounce(0);
+    this.player.setDepth(2);
     this.playerFacing = new Phaser.Math.Vector2(1, 0);
+    this.playerJumpsRemaining = 2;
+    this.playerJustJumped = false;
 
     this.playerStats = {
-      maxHealth: 130,
-      health: 130,
-      meleeDamage: 26,
-      rangedDamage: 18,
+      maxHealth: 150,
+      health: 150,
+      meleeDamage: 28,
+      rangedDamage: 20,
       meleeCooldown: 0.6,
-      rangedCooldown: 0.8,
+      rangedCooldown: 0.85,
     };
     this.playerMeleeCooldown = 0;
     this.playerRangedCooldown = 0;
@@ -65,29 +99,59 @@ export default class MainScene extends Phaser.Scene {
       melee: Phaser.Input.Keyboard.KeyCodes.SPACE,
       ranged: Phaser.Input.Keyboard.KeyCodes.SHIFT,
       glitch: Phaser.Input.Keyboard.KeyCodes.Q,
+      jump: Phaser.Input.Keyboard.KeyCodes.Z,
     });
 
+    this.platforms = this.physics.add.staticGroup();
     this.enemiesGroup = this.physics.add.group();
     this.enemyProjectiles = this.physics.add.group({ allowGravity: false });
     this.playerProjectiles = this.physics.add.group({ allowGravity: false });
-    this.gemsGroup = this.physics.add.group({ allowGravity: false, bounceX: 1, bounceY: 1 });
-    this.glitchSkillGroup = this.physics.add.group({ allowGravity: false });
+    this.gemsGroup = this.physics.add.group({ allowGravity: true, bounceX: 0.6, bounceY: 0.6 });
+    this.glitchSkillGroup = this.physics.add.group({ allowGravity: true });
 
-    this.enemyInstances = [];
-    this.pendingLevelTransition = false;
+    this.portal = this.physics.add.sprite(-200, -200, 'portal');
+    this.portal.body.setAllowGravity(false);
+    this.portal.setVisible(false);
+    this.portal.setAlpha(0);
+    this.portal.body.enable = false;
+    this.portal.setDepth(2);
+
+    this.physics.add.collider(this.player, this.platforms, () => {
+      this.playerJumpsRemaining = 2;
+      this.playerJustJumped = false;
+    });
+    this.physics.add.collider(this.enemiesGroup, this.platforms);
+    this.physics.add.collider(this.gemsGroup, this.platforms);
+    this.physics.add.collider(this.glitchSkillGroup, this.platforms);
 
     this.physics.add.overlap(this.player, this.enemyProjectiles, this.handlePlayerHitByProjectile, null, this);
     this.physics.add.overlap(this.playerProjectiles, this.enemiesGroup, this.handleEnemyHitByProjectile, null, this);
     this.physics.add.overlap(this.player, this.enemiesGroup, this.handlePlayerTouchEnemy, null, this);
     this.physics.add.overlap(this.player, this.gemsGroup, this.collectGem, null, this);
     this.physics.add.overlap(this.player, this.glitchSkillGroup, this.collectGlitchSkill, null, this);
+    this.physics.add.overlap(this.player, this.portal, this.enterPortal, null, this);
 
+    this.enemyInstances = [];
+    this.pendingLevelTransition = false;
+
+    this.music = this.sound.add('bgm_neon', { loop: true, volume: 0.55 });
+    this.sfx = {
+      melee: this.sound.add('sfx_melee', { volume: 0.6 }),
+      pickup: this.sound.add('sfx_pickup', { volume: 0.5 }),
+      glitch: this.sound.add('sfx_glitch', { volume: 0.5 }),
+    };
+    this.applySettings(this.settings);
+
+    this.setupMobileControls();
+    this.prepareLevelEnvironment();
     this.spawnEncounter();
 
     this.uiText = this.add
       .text(16, 16, '', { fontFamily: 'monospace', fontSize: 16, color: '#ffffff', lineSpacing: 6 })
-      .setDepth(10);
+      .setDepth(10)
+      .setScrollFactor(0);
 
+    this.game.events.on('settings:changed', this.handleSettingsChanged, this);
     this.events.once('shutdown', () => this.cleanUp());
   }
 
@@ -98,6 +162,164 @@ export default class MainScene extends Phaser.Scene {
     this.playerProjectiles?.clear(true, true);
     this.gemsGroup?.clear(true, true);
     this.glitchSkillGroup?.clear(true, true);
+    this.platforms?.clear(true, true);
+    this.portal?.destroy();
+    this.music?.stop();
+    this.music?.destroy();
+    Object.values(this.sfx ?? {}).forEach((sound) => sound.destroy());
+    this.mobileControls.forEach((button) => button.destroy());
+    this.mobileControls = [];
+    this.game.events.off('settings:changed', this.handleSettingsChanged, this);
+  }
+
+  handleSettingsChanged = (settings) => {
+    this.applySettings(settings);
+  };
+
+  applySettings(settings) {
+    this.settings = { ...this.settings, ...(settings ?? {}) };
+    if (this.music) {
+      if (this.settings.music) {
+        if (!this.music.isPlaying) {
+          this.music.play();
+        }
+        this.music.setMute(false);
+      } else {
+        this.music.stop();
+      }
+    }
+  }
+
+  playSfx(key) {
+    if (!this.settings.sfx) return;
+    const sound = this.sfx[key];
+    if (sound) {
+      sound.play();
+    }
+  }
+
+  setupMobileControls() {
+    if (this.sys.game.device.os.desktop) return;
+    this.input.addPointer(3);
+    const createButton = ({ x, y, width = 96, height = 96, label, onPress, onRelease }) => {
+      const button = this.add.rectangle(x, y, width, height, 0x07040f, 0.45)
+        .setStrokeStyle(2, 0x2ffaff, 0.6)
+        .setScrollFactor(0)
+        .setDepth(12)
+        .setInteractive({ useHandCursor: false });
+      const text = this.add
+        .text(x, y, label, { fontFamily: 'monospace', fontSize: 20, color: '#2ffaff' })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setDepth(13);
+      button.on('pointerdown', (pointer) => {
+        onPress(pointer);
+        button.setFillStyle(0x1a0e2b, 0.7);
+      });
+      const release = () => {
+        onRelease();
+        button.setFillStyle(0x07040f, 0.45);
+      };
+      button.on('pointerup', release);
+      button.on('pointerout', release);
+      button.on('pointerupoutside', release);
+      this.mobileControls.push(button, text);
+    };
+
+    const { width, height } = this.scale.canvas;
+    createButton({
+      x: 80,
+      y: height - 80,
+      label: '◄',
+      onPress: () => {
+        this.mobileInput.left = true;
+      },
+      onRelease: () => {
+        this.mobileInput.left = false;
+      },
+    });
+    createButton({
+      x: 190,
+      y: height - 80,
+      label: '►',
+      onPress: () => {
+        this.mobileInput.right = true;
+      },
+      onRelease: () => {
+        this.mobileInput.right = false;
+      },
+    });
+    createButton({
+      x: width - 100,
+      y: height - 100,
+      label: 'A',
+      onPress: () => {
+        this.mobileInput.meleeTap = true;
+      },
+      onRelease: () => {
+        this.mobileInput.meleeTap = false;
+      },
+    });
+    createButton({
+      x: width - 200,
+      y: height - 170,
+      label: 'B',
+      onPress: () => {
+        this.mobileInput.rangedTap = true;
+      },
+      onRelease: () => {
+        this.mobileInput.rangedTap = false;
+      },
+    });
+    createButton({
+      x: width - 80,
+      y: height - 200,
+      label: '⤒',
+      onPress: () => {
+        this.mobileInput.jumpTap = true;
+      },
+      onRelease: () => {
+        this.mobileInput.jumpTap = false;
+      },
+    });
+  }
+
+  consumeMobileFlag(flag) {
+    if (!this.mobileInput[flag]) return false;
+    this.mobileInput[flag] = false;
+    return true;
+  }
+
+  prepareLevelEnvironment() {
+    const layout = getLevelLayout(this.level);
+    this.currentLayout = layout;
+
+    this.platforms.clear(true, true);
+    layout.platforms.forEach((platform) => {
+      const sprite = this.platforms.create(platform.x, platform.y, 'platform');
+      sprite.setScale(platform.scaleX ?? 1, platform.scaleY ?? 1);
+      sprite.refreshBody();
+      sprite.setTint(0x1f0b2e + Phaser.Math.Between(0, 0x003333));
+    });
+
+    if (layout.portal) {
+      this.tweens.killTweensOf(this.portal);
+      this.portal.setPosition(layout.portal.x, layout.portal.y - 24);
+      this.portal.setVisible(false);
+      this.portal.setAlpha(0);
+      this.portal.body.enable = false;
+    }
+
+    if (this.player) {
+      this.player.setPosition(layout.playerSpawn.x, layout.playerSpawn.y);
+      this.player.setVelocity(0, 0);
+      this.playerStats.health = this.playerStats.maxHealth;
+      this.player.clearTint();
+      this.playerJumpsRemaining = 2;
+      this.playerJustJumped = false;
+    }
+
+    this.portalActive = false;
   }
 
   spawnEncounter() {
@@ -119,19 +341,20 @@ export default class MainScene extends Phaser.Scene {
 
   spawnEnemyWave() {
     const count = Math.min(12, 4 + Math.floor(this.level * 1.2));
+    const spawnLocations = Phaser.Utils.Array.Shuffle([...this.currentLayout.spawns]);
     for (let i = 0; i < count; i += 1) {
       const baseVariant = Phaser.Utils.Array.GetRandom(ENEMY_VARIANTS);
       const variant = resolveEnemyVariant(baseVariant);
-      const spawnX = Phaser.Math.Between(80, 880);
-      const spawnY = Phaser.Math.Between(80, 480);
+      const spawn = spawnLocations[i % spawnLocations.length];
+      const spawnX = spawn?.x ?? Phaser.Math.Between(100, 860);
+      const spawnY = spawn?.y ?? 420;
       this.createEnemyInstance({ variant, x: spawnX, y: spawnY });
     }
   }
 
   spawnBoss() {
     const bossConfig = getBossForLevel(this.level);
-    const spawnX = 480;
-    const spawnY = 200;
+    const spawnPoint = this.currentLayout.bossSpawn ?? { x: 640, y: 360 };
     const boss = this.createEnemyInstance({
       variant: {
         ...bossConfig,
@@ -143,10 +366,10 @@ export default class MainScene extends Phaser.Scene {
           type: bossConfig.attack.type,
           projectile: bossConfig.projectile,
         },
-        loot: { min: 35, max: 60 },
+        loot: { min: 45, max: 70 },
       },
-      x: spawnX,
-      y: spawnY,
+      x: spawnPoint.x,
+      y: spawnPoint.y,
       scale: 1.45,
       isBoss: true,
     });
@@ -158,17 +381,17 @@ export default class MainScene extends Phaser.Scene {
     boss.enraged = false;
     boss.patternTimer = 0;
     boss.sprite.anims?.stop();
-    this.add.tween({ targets: boss.sprite, scale: boss.sprite.scale + 0.1, yoyo: true, repeat: -1, duration: 1200 });
   }
 
   createEnemyInstance({ variant, x, y, scale = 1, isBoss = false }) {
     const sprite = this.physics.add.sprite(x, y, 'enemy');
     sprite.setCollideWorldBounds(true);
-    sprite.setDamping(true);
-    sprite.setDrag(160, 160);
-    sprite.setBounce(1);
+    sprite.setDragX(300);
+    sprite.setBounce(0);
     sprite.setScale(scale);
     sprite.setTint(variant.tint ?? 0xffffff);
+    sprite.body.setAllowGravity(true);
+    sprite.setDepth(isBoss ? 3 : 2);
 
     const enemy = {
       sprite,
@@ -192,6 +415,7 @@ export default class MainScene extends Phaser.Scene {
   collectGem(_player, gem) {
     const value = gem.getData('value') ?? Phaser.Math.Between(4, 7);
     this.gems += value;
+    this.playSfx('pickup');
     gem.destroy();
   }
 
@@ -205,6 +429,7 @@ export default class MainScene extends Phaser.Scene {
       description: skill.description,
     };
     this.playerGlitchCooldown = 0;
+    this.playSfx('glitch');
     drop.destroy();
   }
 
@@ -269,7 +494,7 @@ export default class MainScene extends Phaser.Scene {
     gem.setData('value', gems);
     gem.setScale(enemy.isBoss ? 1.2 : 0.8);
     gem.setTint(enemy.isBoss ? 0xfff18f : 0x9af0ff);
-    gem.setVelocity(Phaser.Math.Between(-60, 60), Phaser.Math.Between(-60, 60));
+    gem.setVelocity(Phaser.Math.Between(-80, 80), Phaser.Math.Between(-200, -120));
 
     if (enemy.isBoss && enemy.glitchSkill) {
       const drop = this.glitchSkillGroup.create(enemy.sprite.x, enemy.sprite.y - 20, 'enemy');
@@ -283,20 +508,81 @@ export default class MainScene extends Phaser.Scene {
   }
 
   checkEncounterCleared() {
-    if (this.pendingLevelTransition) return;
+    if (this.portalActive) return;
     const activeEnemies = this.enemyInstances.filter((enemy) => enemy.health > 0);
     if (activeEnemies.length === 0) {
-      this.pendingLevelTransition = true;
-      this.time.delayedCall(1500, () => this.completeLevel());
+      this.revealPortal();
     }
   }
 
-  completeLevel() {
-    this.pendingLevelTransition = false;
-    this.level += 1;
-    this.gems += 50;
-    emitLevelComplete({ level: this.level, gems: this.gems });
-    this.spawnEncounter();
+  revealPortal() {
+    if (!this.portal) return;
+    this.portalActive = true;
+    this.tweens.killTweensOf(this.portal);
+    this.portal.setVisible(true);
+    this.portal.body.enable = true;
+    this.portal.setAlpha(1);
+    this.add.tween({ targets: this.portal, angle: { from: -4, to: 4 }, duration: 800, repeat: -1, yoyo: true });
+    this.add.tween({ targets: this.portal, scale: { from: 0.9, to: 1.05 }, duration: 700, repeat: -1, yoyo: true });
+  }
+
+  enterPortal() {
+    if (!this.portalActive || this.pendingLevelTransition) return;
+    this.portalActive = false;
+    this.portal.body.enable = false;
+    this.portal.setVisible(false);
+    this.portal.setAlpha(0);
+    this.advanceLevel();
+  }
+
+  advanceLevel() {
+    if (this.pendingLevelTransition) return;
+    this.pendingLevelTransition = true;
+    const completedLevel = this.level;
+    const reward = 40 + Math.round(completedLevel * 3) + (completedLevel % 10 === 0 ? 70 : 0);
+    this.gems += reward;
+
+    if (completedLevel >= this.maxLevels) {
+      emitLevelComplete({ level: this.maxLevels, gems: this.gems, ascended: true });
+      this.triggerAscension();
+      return;
+    }
+
+    this.level = Math.min(this.maxLevels, this.level + 1);
+    emitLevelComplete({ level: this.level, gems: this.gems, ascended: false });
+    this.time.delayedCall(400, () => {
+      this.prepareLevelEnvironment();
+      this.spawnEncounter();
+      this.pendingLevelTransition = false;
+    });
+  }
+
+  triggerAscension() {
+    this.add
+      .rectangle(480, 270, 960, 540, 0x12041f, 0.8)
+      .setDepth(20);
+    this.add
+      .text(480, 220, 'NEON ASCENSION COMPLETE', {
+        fontFamily: 'monospace',
+        fontSize: 36,
+        color: '#2ffaff',
+      })
+      .setOrigin(0.5)
+      .setDepth(21);
+    this.add
+      .text(480, 280, 'You have severed the final Rift. Return to the menu to bask in glory.', {
+        fontFamily: 'monospace',
+        fontSize: 18,
+        color: '#d6f5ff',
+        wordWrap: { width: 600 },
+        align: 'center',
+      })
+      .setOrigin(0.5)
+      .setDepth(21);
+    this.music?.stop();
+    this.time.delayedCall(1200, () => {
+      this.pendingLevelTransition = false;
+    });
   }
 
   update(time, delta) {
@@ -310,30 +596,51 @@ export default class MainScene extends Phaser.Scene {
   }
 
   updatePlayer(deltaSeconds) {
-    const speed = 220;
+    const speed = 260;
     let vx = 0;
-    let vy = 0;
-    if (this.cursors.left.isDown) vx -= speed;
-    if (this.cursors.right.isDown) vx += speed;
-    if (this.cursors.up.isDown) vy -= speed;
-    if (this.cursors.down.isDown) vy += speed;
+    if (this.cursors.left.isDown || this.mobileInput.left) vx -= speed;
+    if (this.cursors.right.isDown || this.mobileInput.right) vx += speed;
+    this.player.setVelocityX(vx);
 
-    this.player.setVelocity(vx, vy);
+    if (vx !== 0) {
+      this.playerFacing.set(vx, 0).normalize();
+      this.player.setFlipX(vx < 0);
+    }
 
-    if (vx !== 0 || vy !== 0) {
-      this.playerFacing.set(vx, vy).normalize();
+    const jumpPressed = Phaser.Input.Keyboard.JustDown(this.cursors.up)
+      || Phaser.Input.Keyboard.JustDown(this.keys.jump)
+      || this.consumeMobileFlag('jumpTap');
+
+    if (jumpPressed) {
+      if (this.player.body.blocked.down) {
+        this.player.setVelocityY(-460);
+        this.playerJumpsRemaining = 1;
+        this.playerJustJumped = true;
+        this.time.delayedCall(80, () => { this.playerJustJumped = false; });
+      } else if (this.playerJumpsRemaining > 0 && !this.playerJustJumped) {
+        this.player.setVelocityY(-420);
+        this.playerJumpsRemaining -= 1;
+        this.playerJustJumped = true;
+        this.time.delayedCall(80, () => { this.playerJustJumped = false; });
+      }
+    }
+
+    if (this.player.body.blocked.down) {
+      this.playerJumpsRemaining = 2;
     }
 
     this.playerMeleeCooldown = Math.max(0, this.playerMeleeCooldown - deltaSeconds);
     this.playerRangedCooldown = Math.max(0, this.playerRangedCooldown - deltaSeconds);
     this.playerGlitchCooldown = Math.max(0, this.playerGlitchCooldown - deltaSeconds);
 
-    if (Phaser.Input.Keyboard.JustDown(this.keys.melee) && this.playerMeleeCooldown === 0) {
+    const meleePressed = Phaser.Input.Keyboard.JustDown(this.keys.melee) || this.consumeMobileFlag('meleeTap');
+    if (meleePressed && this.playerMeleeCooldown === 0) {
       this.playerMeleeCooldown = this.playerStats.meleeCooldown;
       this.performMeleeAttack();
     }
 
-    if (Phaser.Input.Keyboard.JustDown(this.keys.ranged) && this.playerRangedCooldown === 0) {
+    const rangedPressed = Phaser.Input.Keyboard.JustDown(this.keys.ranged) || this.consumeMobileFlag('rangedTap');
+    if (rangedPressed && this.playerRangedCooldown === 0) {
       this.playerRangedCooldown = this.playerStats.rangedCooldown;
       this.performRangedAttack();
     }
@@ -345,7 +652,9 @@ export default class MainScene extends Phaser.Scene {
 
   performMeleeAttack() {
     const range = 64;
+    const verticalTolerance = 48;
     this.add.tween({ targets: this.player, scaleX: 1.1, scaleY: 0.9, yoyo: true, duration: 120 });
+    this.playSfx('melee');
     for (const enemy of this.enemyInstances) {
       if (enemy.health <= 0) continue;
       const distance = Phaser.Math.Distance.Between(
@@ -354,24 +663,27 @@ export default class MainScene extends Phaser.Scene {
         enemy.sprite.x,
         enemy.sprite.y
       );
-      if (distance <= range) {
+      const verticalDiff = Math.abs(this.player.y - enemy.sprite.y);
+      if (distance <= range && verticalDiff <= verticalTolerance) {
         this.damageEnemy(enemy, this.playerStats.meleeDamage);
       }
     }
   }
 
   performRangedAttack() {
-    const speed = 360;
+    const speed = 420;
     const direction = this.playerFacing.clone().normalize();
     if (direction.length() === 0) {
       direction.set(1, 0);
     }
-    const projectile = this.playerProjectiles.create(this.player.x, this.player.y, 'enemy');
-    projectile.setScale(0.4);
+    const offsetX = this.player.width * 0.4 * (direction.x >= 0 ? 1 : -1);
+    const projectile = this.playerProjectiles.create(this.player.x + offsetX, this.player.y - 6, 'enemy');
+    projectile.setScale(0.35);
     projectile.setTint(0x66ccff);
     projectile.body.setAllowGravity(false);
     projectile.setVelocity(direction.x * speed, direction.y * speed);
     projectile.setData('ttl', 1.6);
+    projectile.setDepth(2);
   }
 
   useGlitchSkill() {
@@ -386,6 +698,7 @@ export default class MainScene extends Phaser.Scene {
       enemy.sprite.setTint(0x7cf2ff);
       enemy.sprite.setVelocity(0, 0);
     }
+    this.playSfx('glitch');
   }
 
   updateGlitchSkill(deltaSeconds) {
@@ -422,7 +735,7 @@ export default class MainScene extends Phaser.Scene {
 
       if (enemy.stunnedTimer > 0) {
         enemy.stunnedTimer -= deltaSeconds;
-        enemy.sprite.setVelocity(0, 0);
+        enemy.sprite.setVelocityX(0);
         if (enemy.stunnedTimer <= 0) {
           enemy.state = EnemyState.PATROL;
           enemy.sprite.setTint(enemy.variant.tint ?? 0xffffff);
@@ -444,8 +757,9 @@ export default class MainScene extends Phaser.Scene {
         }
       }
 
-      const distance = Phaser.Math.Distance.BetweenPoints(playerPosition, enemy.sprite);
-      const canSee = this.canEnemySeePlayer(enemy, playerPosition, distance);
+      const horizontalDistance = Math.abs(playerPosition.x - enemy.sprite.x);
+      const verticalDistance = Math.abs(playerPosition.y - enemy.sprite.y);
+      const canSee = this.canEnemySeePlayer(enemy, horizontalDistance, verticalDistance);
 
       switch (enemy.state) {
         case EnemyState.PATROL:
@@ -457,7 +771,7 @@ export default class MainScene extends Phaser.Scene {
             enemy.state = EnemyState.PATROL;
             break;
           }
-          if (distance <= (enemy.variant.attack?.range ?? 48)) {
+          if (horizontalDistance <= (enemy.variant.attack?.range ?? 48) && verticalDistance <= 64) {
             enemy.state = EnemyState.ATTACK;
           } else {
             this.updateEnemyChase(enemy, playerPosition);
@@ -468,7 +782,7 @@ export default class MainScene extends Phaser.Scene {
             enemy.state = EnemyState.PATROL;
             break;
           }
-          this.performEnemyAttack(enemy, playerPosition, distance);
+          this.performEnemyAttack(enemy, playerPosition, horizontalDistance, verticalDistance);
           enemy.state = EnemyState.CHASE;
           break;
         default:
@@ -493,24 +807,21 @@ export default class MainScene extends Phaser.Scene {
     }
   }
 
-  canEnemySeePlayer(enemy, playerPosition, distance) {
+  canEnemySeePlayer(enemy, horizontalDistance, verticalDistance) {
     const radius = enemy.variant.sightRadius ?? 280;
-    if (distance > radius) return false;
-    const enemyPos = new Phaser.Math.Vector2(enemy.sprite.x, enemy.sprite.y);
-    const toPlayer = playerPosition.clone().subtract(enemyPos).normalize();
-    const facing = new Phaser.Math.Vector2(enemy.sprite.body.velocity.x, enemy.sprite.body.velocity.y);
-    if (facing.length() === 0) facing.set(enemy.patrolDirection, 0);
-    facing.normalize();
-    const dot = Phaser.Math.Clamp(facing.dot(toPlayer), -1, 1);
-    const angle = Phaser.Math.RadToDeg(Math.acos(dot));
-    const cone = (enemy.variant.visionAngle ?? 120) / 2;
-    return angle <= cone;
+    if (horizontalDistance > radius) return false;
+    if (verticalDistance > 180) return false;
+    return true;
   }
 
   updateEnemyPatrol(enemy) {
     const speed = enemy.variant.speed ?? 100;
     const range = enemy.variant.patrolRange ?? 180;
-    enemy.sprite.setVelocity(enemy.patrolDirection * speed, 0);
+    const direction = enemy.patrolDirection;
+    enemy.sprite.setVelocityX(direction * speed);
+    if (enemy.sprite.body.blocked.left || enemy.sprite.body.blocked.right) {
+      enemy.patrolDirection *= -1;
+    }
     const offset = enemy.sprite.x - enemy.patrolAnchor.x;
     if (Math.abs(offset) >= range / 2) {
       enemy.patrolDirection *= -1;
@@ -519,11 +830,14 @@ export default class MainScene extends Phaser.Scene {
 
   updateEnemyChase(enemy, playerPosition) {
     const speed = enemy.variant.speed ?? 100;
-    const direction = playerPosition.clone().subtract({ x: enemy.sprite.x, y: enemy.sprite.y }).normalize();
-    enemy.sprite.setVelocity(direction.x * speed, direction.y * speed);
+    const direction = Math.sign(playerPosition.x - enemy.sprite.x) || 0;
+    enemy.sprite.setVelocityX(direction * speed);
+    if (playerPosition.y + 32 < enemy.sprite.y && enemy.sprite.body.blocked.down) {
+      enemy.sprite.setVelocityY(-380);
+    }
   }
 
-  performEnemyAttack(enemy, playerPosition, distance) {
+  performEnemyAttack(enemy, playerPosition, horizontalDistance, verticalDistance) {
     if (enemy.cooldown > 0) return;
     const attack = enemy.variant.attack ?? { type: 'melee', damage: 8, range: 48, cooldown: 1.2 };
     enemy.cooldown = attack.cooldown ?? 1.2;
@@ -534,7 +848,7 @@ export default class MainScene extends Phaser.Scene {
         const angleOffset = Phaser.Math.DegToRad(spread * (i - (burst - 1) / 2));
         const angle = Phaser.Math.Angle.Between(enemy.sprite.x, enemy.sprite.y, playerPosition.x, playerPosition.y) + angleOffset;
         const velocity = this.physics.velocityFromRotation(angle, attack.projectile.speed ?? 320);
-        const projectile = this.enemyProjectiles.create(enemy.sprite.x, enemy.sprite.y, 'enemy');
+        const projectile = this.enemyProjectiles.create(enemy.sprite.x, enemy.sprite.y - 10, 'enemy');
         projectile.setScale(0.5);
         projectile.setTint(0xffb347);
         projectile.body.setAllowGravity(false);
@@ -551,7 +865,7 @@ export default class MainScene extends Phaser.Scene {
           });
         }
       }
-    } else if (distance <= (attack.range ?? 48)) {
+    } else if (horizontalDistance <= (attack.range ?? 48) && verticalDistance <= 48) {
       this.damagePlayer(attack.damage ?? 10);
       this.add.tween({ targets: enemy.sprite, scaleX: 1.1, scaleY: 0.9, yoyo: true, duration: 140 });
     }
@@ -566,11 +880,13 @@ export default class MainScene extends Phaser.Scene {
     const glitchLine = this.glitchSkill
       ? `Glitch Skill: ${this.glitchSkill.name} (${this.playerGlitchCooldown.toFixed(1)}s)`
       : 'Glitch Skill: None';
+    const portalLine = this.portalActive ? 'Portal: ACTIVE' : 'Portal: Locked';
     this.uiText.setText([
       `Level: ${this.level}${this.level % 10 === 0 ? ' - Boss' : ''}`,
       `HP: ${Math.round(this.playerStats.health)}/${this.playerStats.maxHealth}`,
       `Gems: ${this.gems}`,
       `Enemies Remaining: ${enemyCount}`,
+      portalLine,
       bossLine,
       glitchLine,
     ].filter(Boolean));

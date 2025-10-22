@@ -6,8 +6,12 @@ import { saveProgress } from '../state/saveManager.js';
 let gameInstance = null;
 let cleanupHandlers = [];
 
-export async function startGame({ mountId, onSession }) {
+export async function startGame({ mountId, onSession, settings }) {
   if (gameInstance) {
+    if (settings) {
+      gameInstance.registry.set('settings', settings);
+      gameInstance.events.emit('settings:changed', settings);
+    }
     return gameInstance;
   }
 
@@ -18,11 +22,25 @@ export async function startGame({ mountId, onSession }) {
     height: 540,
     pixelArt: true,
     backgroundColor: '#05030a',
-    physics: { default: 'arcade', arcade: { debug: false, gravity: { y: 0 } } },
-    scene: [MainScene]
+    fps: { target: 60, forceSetTimeOut: true },
+    scale: {
+      mode: Phaser.Scale.FIT,
+      autoCenter: Phaser.Scale.CENTER_BOTH,
+    },
+    physics: {
+      default: 'arcade',
+      arcade: {
+        debug: false,
+        gravity: { y: 1000 },
+      },
+    },
+    scene: [MainScene],
   };
 
   gameInstance = new Phaser.Game(config);
+  if (settings) {
+    gameInstance.registry.set('settings', settings);
+  }
 
   cleanupHandlers.push(
     onLevelComplete(async (payload) => {
@@ -36,6 +54,10 @@ export async function startGame({ mountId, onSession }) {
       onSession(payload);
     })
   );
+
+  if (settings) {
+    gameInstance.events.emit('settings:changed', settings);
+  }
 
   return gameInstance;
 }
