@@ -1,6 +1,7 @@
 import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { Strategy as FacebookStrategy } from 'passport-facebook';
+import { Strategy as AppleStrategy } from 'passport-apple';
 import config from './default.js';
 import User from '../server/src/models/User.js';
 
@@ -42,6 +43,24 @@ export function configurePassport() {
     }, async (_accessToken, _refreshToken, profile, done) => {
       try {
         const user = await User.findOrCreateOAuthUser('facebook', profile);
+        done(null, user);
+      } catch (error) {
+        done(error, null);
+      }
+    }));
+  }
+
+  if (config.oauth.apple.clientID && config.oauth.apple.keyID && config.oauth.apple.teamID && config.oauth.apple.privateKey) {
+    passport.use(new AppleStrategy({
+      clientID: config.oauth.apple.clientID,
+      teamID: config.oauth.apple.teamID,
+      keyID: config.oauth.apple.keyID,
+      privateKeyString: config.oauth.apple.privateKey,
+      callbackURL: '/api/auth/apple/callback',
+      scope: ['name', 'email']
+    }, async (_accessToken, _refreshToken, profile, done) => {
+      try {
+        const user = await User.findOrCreateOAuthUser('apple', profile);
         done(null, user);
       } catch (error) {
         done(error, null);

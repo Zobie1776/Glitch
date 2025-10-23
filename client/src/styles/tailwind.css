@@ -2,12 +2,32 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --glitch-magenta: #ff2bff;
+  --glitch-cyan: #39f3ff;
+  --glitch-blue: #4d6dff;
+}
+
+body {
+  font-family: 'VT323', 'Share Tech Mono', monospace;
+  letter-spacing: 0.02em;
+}
+
+.font-glitch {
+  font-family: 'VT323', 'Share Tech Mono', monospace;
+}
+
+.glass-panel {
+  @apply bg-slate-950/60 border border-slate-800/70 backdrop-blur-xl shadow-2xl;
+  box-shadow: 0 0 25px rgba(79, 180, 255, 0.18);
+}
+
 .input {
   @apply bg-slate-950/60 border border-slate-800 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-glitch-neon;
 }
 
 .btn-primary {
-  @apply bg-glitch-neon/80 hover:bg-glitch-neon text-slate-950 font-semibold px-4 py-2 rounded transition-colors;
+  @apply bg-glitch-neon/80 hover:bg-glitch-neon text-slate-950 font-semibold px-4 py-2 rounded transition-colors shadow-lg shadow-glitch-neon/30;
 }
 
 .btn-secondary {
@@ -16,4 +36,63 @@
 
 .toggle {
   @apply h-5 w-5 accent-glitch-neon;
+}
+
+.hud-shell {
+  @apply pointer-events-none fixed inset-x-0 top-3 px-6 flex items-start justify-between;
+}
+
+.hud-card {
+  @apply pointer-events-auto glass-panel rounded-2xl px-4 py-3 text-xs uppercase tracking-widest;
+}
+
+.hud-bar {
+  position: relative;
+  width: 100%;
+  height: 12px;
+  border-radius: 9999px;
+  overflow: hidden;
+  background: rgba(15, 8, 32, 0.8);
+  border: 1px solid rgba(61, 202, 255, 0.35);
+}
+
+.hud-bar__fill {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(255, 43, 255, 0.9), rgba(57, 243, 255, 0.9));
+  transition: width 120ms ease-out;
+}
+
+.cooldown-ring {
+  position: relative;
+  width: 60px;
+  height: 60px;
+  border-radius: 9999px;
+  background: rgba(12, 8, 25, 0.85);
+  border: 2px solid rgba(57, 243, 255, 0.6);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.cooldown-ring::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: conic-gradient(var(--glitch-cyan) calc(var(--progress, 0) * 1%), transparent 0);
+  opacity: 0.65;
+  transition: all 200ms ease;
+}
+
+.cooldown-ring[data-ready='true'] {
+  border-color: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.4);
+}
+
+.cooldown-ring__label {
+  position: relative;
+  font-size: 0.65rem;
+  letter-spacing: 0.1em;
+  color: #a7f1ff;
 }

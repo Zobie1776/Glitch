@@ -6,6 +6,9 @@ const DEFAULT_SETTINGS = Object.freeze({
   music: true,
   sfx: true,
   showDamage: true,
+  musicVolume: 0.75,
+  sfxVolume: 0.8,
+  controllerHints: true,
 });
 
 function loadInitialSettings() {
