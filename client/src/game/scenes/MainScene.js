@@ -1,9 +1,12 @@
 import Phaser from 'phaser';
-import { emitLevelComplete, emitPlayerDeath } from '../events.js';
+import { emitHudUpdate, emitLevelComplete, emitPlayerDeath } from '../events.js';
 import { loadProgress } from '../../state/saveManager.js';
 import { ENEMY_VARIANTS, resolveEnemyVariant } from '../data/enemyVariants.js';
 import { createBossProjectilePattern, getBossForLevel } from '../data/bosses.js';
 import { getLevelLayout } from '../data/levels.js';
+import { PLAYER_CONFIG } from '../data/playerConfig.js';
+import GlitchManager from '../systems/GlitchManager.js';
+import { GLITCH_CONFIG } from '../data/glitchConfig.js';
 
 const EnemyState = Object.freeze({
   PATROL: 'patrol',
@@ -45,6 +48,23 @@ export default class MainScene extends Phaser.Scene {
       meleeTap: false,
       rangedTap: false,
     };
+    this.moveConfig = PLAYER_CONFIG.movement;
+    this.combatConfig = PLAYER_CONFIG.combat;
+    this.pickupConfig = PLAYER_CONFIG.pickups;
+    this.glitchManager = null;
+    this.coyoteTimer = 0;
+    this.jumpBufferTimer = 0;
+    this.dashTimer = 0;
+    this.dashCooldown = 0;
+    this.playerInvulnerability = 0;
+    this.comboIndex = 0;
+    this.comboTimer = 0;
+    this.elapsedTime = 0;
+    this.score = 0;
+    this.controlsInverted = false;
+    this.isDashing = false;
+    this.phaseBreakActive = false;
+    this.phaseBreakFactor = 1;
   }
 
   async init() {
@@ -72,23 +92,24 @@ export default class MainScene extends Phaser.Scene {
     this.physics.world.setBounds(0, 0, 960, 540);
     this.cameras.main.setBounds(0, 0, 960, 540);
     this.cameras.main.setBackgroundColor('#05030a');
+    this.originalGravity = this.physics.world.gravity.y;
 
     this.player = this.physics.add.sprite(120, 420, 'player');
     this.player.setCollideWorldBounds(true);
-    this.player.setDragX(1200);
+    this.player.setDragX(this.moveConfig.friction);
     this.player.setBounce(0);
     this.player.setDepth(2);
     this.playerFacing = new Phaser.Math.Vector2(1, 0);
-    this.playerJumpsRemaining = 2;
-    this.playerJustJumped = false;
+    this.playerJumpsRemaining = 1;
 
     this.playerStats = {
       maxHealth: 150,
       health: 150,
       meleeDamage: 28,
       rangedDamage: 20,
-      meleeCooldown: 0.6,
-      rangedCooldown: 0.85,
+      meleeCooldown: this.combatConfig.meleeCombo[0].cooldown,
+      rangedCooldown: this.combatConfig.rangedCooldown,
+      weaponName: 'Mono Blade'
     };
     this.playerMeleeCooldown = 0;
     this.playerRangedCooldown = 0;
@@ -100,6 +121,7 @@ export default class MainScene extends Phaser.Scene {
       ranged: Phaser.Input.Keyboard.KeyCodes.SHIFT,
       glitch: Phaser.Input.Keyboard.KeyCodes.Q,
       jump: Phaser.Input.Keyboard.KeyCodes.Z,
+      dash: Phaser.Input.Keyboard.KeyCodes.X,
     });
 
     this.platforms = this.physics.add.staticGroup();
@@ -107,6 +129,7 @@ export default class MainScene extends Phaser.Scene {
     this.enemyProjectiles = this.physics.add.group({ allowGravity: false });
     this.playerProjectiles = this.physics.add.group({ allowGravity: false });
     this.gemsGroup = this.physics.add.group({ allowGravity: true, bounceX: 0.6, bounceY: 0.6 });
+    this.healthOrbsGroup = this.physics.add.group({ allowGravity: true, bounceX: 0.4, bounceY: 0.4 });
     this.glitchSkillGroup = this.physics.add.group({ allowGravity: true });
 
     this.portal = this.physics.add.sprite(-200, -200, 'portal');
@@ -117,22 +140,28 @@ export default class MainScene extends Phaser.Scene {
     this.portal.setDepth(2);
 
     this.physics.add.collider(this.player, this.platforms, () => {
-      this.playerJumpsRemaining = 2;
-      this.playerJustJumped = false;
+      this.playerJumpsRemaining = 1;
     });
     this.physics.add.collider(this.enemiesGroup, this.platforms);
     this.physics.add.collider(this.gemsGroup, this.platforms);
     this.physics.add.collider(this.glitchSkillGroup, this.platforms);
+    this.physics.add.collider(this.healthOrbsGroup, this.platforms);
 
     this.physics.add.overlap(this.player, this.enemyProjectiles, this.handlePlayerHitByProjectile, null, this);
     this.physics.add.overlap(this.playerProjectiles, this.enemiesGroup, this.handleEnemyHitByProjectile, null, this);
     this.physics.add.overlap(this.player, this.enemiesGroup, this.handlePlayerTouchEnemy, null, this);
     this.physics.add.overlap(this.player, this.gemsGroup, this.collectGem, null, this);
     this.physics.add.overlap(this.player, this.glitchSkillGroup, this.collectGlitchSkill, null, this);
+    this.physics.add.overlap(this.player, this.healthOrbsGroup, this.collectHealthOrb, null, this);
     this.physics.add.overlap(this.player, this.portal, this.enterPortal, null, this);
 
     this.enemyInstances = [];
     this.pendingLevelTransition = false;
+    this.glitchManager = new GlitchManager(this, GLITCH_CONFIG);
+    this.elapsedTime = 0;
+    this.score = 0;
+    this.dashCooldown = 0;
+    this.playerInvulnerability = 0;
 
     this.music = this.sound.add('bgm_neon', { loop: true, volume: 0.55 });
     this.sfx = {
@@ -150,6 +179,19 @@ export default class MainScene extends Phaser.Scene {
       .text(16, 16, '', { fontFamily: 'monospace', fontSize: 16, color: '#ffffff', lineSpacing: 6 })
       .setDepth(10)
       .setScrollFactor(0);
+
+    emitHudUpdate({
+      health: this.playerStats.health,
+      maxHealth: this.playerStats.maxHealth,
+      gems: this.gems,
+      meleeRemaining: 0,
+      rangedRemaining: 0,
+      dashRemaining: 0,
+      glitchSkill: { name: 'None', cooldown: 0, remaining: 0 },
+      weapon: this.playerStats.weaponName,
+      score: this.score,
+      timer: this.elapsedTime
+    });
 
     this.game.events.on('settings:changed', this.handleSettingsChanged, this);
     this.events.once('shutdown', () => this.cleanUp());
@@ -293,6 +335,9 @@ export default class MainScene extends Phaser.Scene {
   prepareLevelEnvironment() {
     const layout = getLevelLayout(this.level);
     this.currentLayout = layout;
+    if (layout?.palette) {
+      this.cameras.main.setBackgroundColor(layout.palette);
+    }
 
     this.platforms.clear(true, true);
     layout.platforms.forEach((platform) => {
@@ -315,8 +360,7 @@ export default class MainScene extends Phaser.Scene {
       this.player.setVelocity(0, 0);
       this.playerStats.health = this.playerStats.maxHealth;
       this.player.clearTint();
-      this.playerJumpsRemaining = 2;
-      this.playerJustJumped = false;
+      this.playerJumpsRemaining = 1;
     }
 
     this.portalActive = false;
@@ -415,22 +459,28 @@ export default class MainScene extends Phaser.Scene {
   collectGem(_player, gem) {
     const value = gem.getData('value') ?? Phaser.Math.Between(4, 7);
     this.gems += value;
+    this.score += value * 5;
     this.playSfx('pickup');
     gem.destroy();
   }
 
   collectGlitchSkill(_player, drop) {
-    const skill = drop.getData('skill');
-    if (!skill) return;
-    this.glitchSkill = {
-      ...skill,
-      cooldown: skill.cooldown,
-      remaining: 0,
-      description: skill.description,
-    };
+    const skillKey = drop.getData('skill');
+    if (!skillKey || !this.glitchManager) return;
+    const unlocked = this.glitchManager.unlockSkill(skillKey);
+    if (!unlocked) return;
+    this.glitchSkill = unlocked;
     this.playerGlitchCooldown = 0;
     this.playSfx('glitch');
     drop.destroy();
+  }
+
+  collectHealthOrb(_player, orb) {
+    const value = this.pickupConfig.healthOrbValue ?? 25;
+    this.playerStats.health = Math.min(this.playerStats.maxHealth, this.playerStats.health + value);
+    this.playSfx('pickup');
+    emitHudUpdate({ health: this.playerStats.health, maxHealth: this.playerStats.maxHealth });
+    orb.destroy();
   }
 
   handlePlayerHitByProjectile(player, projectile) {
@@ -453,11 +503,18 @@ export default class MainScene extends Phaser.Scene {
     this.damagePlayer(touchDamage, enemySprite);
   }
 
-  damagePlayer(amount) {
+  damagePlayer(amount, source) {
     if (!this.playerStats) return;
+    if (this.playerInvulnerability > 0) return;
+    this.playerInvulnerability = 0.6;
     this.playerStats.health = Math.max(0, this.playerStats.health - amount);
     this.player.setTintFill(0xff4444);
     this.time.delayedCall(120, () => this.player.clearTint());
+    if (source?.x !== undefined) {
+      const direction = Math.sign(this.player.x - source.x) || 1;
+      this.player.setVelocity(direction * 200, -220);
+    }
+    emitHudUpdate({ health: this.playerStats.health, maxHealth: this.playerStats.maxHealth });
     if (this.playerStats.health <= 0) {
       this.handlePlayerDeath();
     }
@@ -479,6 +536,7 @@ export default class MainScene extends Phaser.Scene {
         : enemy.variant.tint ?? 0xffffff;
       enemy.sprite.setTint(tint);
     });
+    this.applyHitstop();
     if (enemy.health <= 0) {
       this.killEnemy(enemy);
     }
@@ -488,6 +546,7 @@ export default class MainScene extends Phaser.Scene {
     enemy.health = 0;
     enemy.state = EnemyState.STUNNED;
     enemy.sprite.disableBody(true, true);
+    this.score += enemy.isBoss ? 1500 : 250;
     const loot = enemy.variant.loot ?? { min: 4, max: 7 };
     const gems = Phaser.Math.Between(loot.min, loot.max);
     const gem = this.gemsGroup.create(enemy.sprite.x, enemy.sprite.y, 'gem');
@@ -496,11 +555,19 @@ export default class MainScene extends Phaser.Scene {
     gem.setTint(enemy.isBoss ? 0xfff18f : 0x9af0ff);
     gem.setVelocity(Phaser.Math.Between(-80, 80), Phaser.Math.Between(-200, -120));
 
+    if (!enemy.isBoss && Math.random() < this.pickupConfig.healthDropChance) {
+      const orb = this.healthOrbsGroup.create(enemy.sprite.x, enemy.sprite.y - 10, 'enemy');
+      orb.setTint(0xff7cf6);
+      orb.setScale(0.5);
+      orb.setData('value', this.pickupConfig.healthOrbValue);
+      orb.setVelocity(Phaser.Math.Between(-60, 60), Phaser.Math.Between(-160, -100));
+    }
+
     if (enemy.isBoss && enemy.glitchSkill) {
       const drop = this.glitchSkillGroup.create(enemy.sprite.x, enemy.sprite.y - 20, 'enemy');
       drop.setTint(0x9af0ff);
       drop.setScale(0.8);
-      drop.setData('skill', enemy.glitchSkill);
+      drop.setData('skill', enemy.glitchSkill.key);
       this.add.tween({ targets: drop, y: drop.y - 10, yoyo: true, repeat: -1, duration: 900 });
     }
 
@@ -543,13 +610,13 @@ export default class MainScene extends Phaser.Scene {
     this.gems += reward;
 
     if (completedLevel >= this.maxLevels) {
-      emitLevelComplete({ level: this.maxLevels, gems: this.gems, ascended: true });
+      emitLevelComplete({ level: this.maxLevels, gems: this.gems, ascended: true, score: this.score });
       this.triggerAscension();
       return;
     }
 
     this.level = Math.min(this.maxLevels, this.level + 1);
-    emitLevelComplete({ level: this.level, gems: this.gems, ascended: false });
+    emitLevelComplete({ level: this.level, gems: this.gems, ascended: false, score: this.score });
     this.time.delayedCall(400, () => {
       this.prepareLevelEnvironment();
       this.spawnEncounter();
@@ -588,23 +655,60 @@ export default class MainScene extends Phaser.Scene {
   update(time, delta) {
     if (!this.player) return;
     const deltaSeconds = delta / 1000;
+    this.elapsedTime += deltaSeconds;
+    this.playerInvulnerability = Math.max(0, this.playerInvulnerability - deltaSeconds);
+    if (this.isDashing) {
+      this.dashTimer -= deltaSeconds;
+      if (this.dashTimer <= 0) {
+        this.finishDash();
+      }
+    }
+    if (this.dashCooldown > 0 && !this.isDashing) {
+      this.dashCooldown = Math.max(0, this.dashCooldown - deltaSeconds);
+    }
+    if (this.glitchManager) {
+      this.glitchManager.update(deltaSeconds);
+    }
     this.updatePlayer(deltaSeconds);
     this.updateGlitchSkill(deltaSeconds);
     this.updateProjectiles(deltaSeconds);
+    this.updatePickups(deltaSeconds);
     this.updateEnemies(deltaSeconds);
     this.updateUI();
   }
 
   updatePlayer(deltaSeconds) {
-    const speed = 260;
-    let vx = 0;
-    if (this.cursors.left.isDown || this.mobileInput.left) vx -= speed;
-    if (this.cursors.right.isDown || this.mobileInput.right) vx += speed;
-    this.player.setVelocityX(vx);
+    const body = this.player.body;
+    let horizontal = 0;
+    if (this.cursors.left.isDown || this.mobileInput.left) horizontal -= 1;
+    if (this.cursors.right.isDown || this.mobileInput.right) horizontal += 1;
+    if (this.controlsInverted) horizontal *= -1;
 
-    if (vx !== 0) {
-      this.playerFacing.set(vx, 0).normalize();
-      this.player.setFlipX(vx < 0);
+    const speedBoost = this.phaseBreakActive ? 1 / this.phaseBreakFactor : 1;
+    const maxSpeed = this.moveConfig.maxSpeed * speedBoost;
+
+    if (this.isDashing) {
+      body.setAccelerationX(0);
+    } else if (horizontal !== 0) {
+      const accel = body.blocked.down ? this.moveConfig.acceleration : this.moveConfig.airAcceleration;
+      body.setAccelerationX(horizontal * accel * speedBoost);
+      if (Math.abs(body.velocity.x) > maxSpeed) {
+        body.setVelocityX(Math.sign(body.velocity.x) * maxSpeed);
+      }
+      this.playerFacing.set(horizontal, 0).normalize();
+      this.player.setFlipX(horizontal < 0);
+    } else {
+      const decel = body.blocked.down ? this.moveConfig.deceleration : this.moveConfig.airDeceleration;
+      const nextVelocity = Phaser.Math.Linear(body.velocity.x, 0, Phaser.Math.Clamp(decel * deltaSeconds / Math.max(1, maxSpeed), 0, 1));
+      body.setVelocityX(nextVelocity);
+      body.setAccelerationX(0);
+    }
+
+    if (body.blocked.down) {
+      this.coyoteTimer = this.moveConfig.coyoteTime;
+      this.playerJumpsRemaining = 1;
+    } else {
+      this.coyoteTimer = Math.max(0, this.coyoteTimer - deltaSeconds);
     }
 
     const jumpPressed = Phaser.Input.Keyboard.JustDown(this.cursors.up)
@@ -612,30 +716,41 @@ export default class MainScene extends Phaser.Scene {
       || this.consumeMobileFlag('jumpTap');
 
     if (jumpPressed) {
-      if (this.player.body.blocked.down) {
-        this.player.setVelocityY(-460);
-        this.playerJumpsRemaining = 1;
-        this.playerJustJumped = true;
-        this.time.delayedCall(80, () => { this.playerJustJumped = false; });
-      } else if (this.playerJumpsRemaining > 0 && !this.playerJustJumped) {
-        this.player.setVelocityY(-420);
+      this.jumpBufferTimer = this.moveConfig.jumpBuffer;
+    } else {
+      this.jumpBufferTimer = Math.max(0, this.jumpBufferTimer - deltaSeconds);
+    }
+
+    if (!this.isDashing && this.jumpBufferTimer > 0) {
+      if (body.blocked.down || this.coyoteTimer > 0) {
+        this.executeJump(this.moveConfig.jumpVelocity);
+      } else if (this.playerJumpsRemaining > 0) {
+        this.executeJump(this.moveConfig.doubleJumpVelocity);
         this.playerJumpsRemaining -= 1;
-        this.playerJustJumped = true;
-        this.time.delayedCall(80, () => { this.playerJustJumped = false; });
       }
     }
 
-    if (this.player.body.blocked.down) {
-      this.playerJumpsRemaining = 2;
+    const jumpReleased = Phaser.Input.Keyboard.JustUp(this.cursors.up) || Phaser.Input.Keyboard.JustUp(this.keys.jump);
+    if (jumpReleased && body.velocity.y < 0) {
+      body.setVelocityY(Math.max(body.velocity.y, this.moveConfig.jumpVelocity * this.moveConfig.variableJumpCutoff));
+    }
+
+    if (!this.isDashing && Phaser.Input.Keyboard.JustDown(this.keys.dash)) {
+      this.startDash();
     }
 
     this.playerMeleeCooldown = Math.max(0, this.playerMeleeCooldown - deltaSeconds);
     this.playerRangedCooldown = Math.max(0, this.playerRangedCooldown - deltaSeconds);
     this.playerGlitchCooldown = Math.max(0, this.playerGlitchCooldown - deltaSeconds);
+    if (this.comboTimer > 0) {
+      this.comboTimer = Math.max(0, this.comboTimer - deltaSeconds);
+      if (this.comboTimer === 0) {
+        this.comboIndex = 0;
+      }
+    }
 
     const meleePressed = Phaser.Input.Keyboard.JustDown(this.keys.melee) || this.consumeMobileFlag('meleeTap');
     if (meleePressed && this.playerMeleeCooldown === 0) {
-      this.playerMeleeCooldown = this.playerStats.meleeCooldown;
       this.performMeleeAttack();
     }
 
@@ -650,10 +765,166 @@ export default class MainScene extends Phaser.Scene {
     }
   }
 
+  executeJump(power) {
+    this.player.setVelocityY(power);
+    this.jumpBufferTimer = 0;
+    this.coyoteTimer = 0;
+  }
+
+  startDash() {
+    if (this.dashCooldown > 0 || this.isDashing) return;
+    this.isDashing = true;
+    this.dashTimer = this.moveConfig.dashDuration;
+    this.dashCooldown = this.moveConfig.dashCooldown;
+    const direction = this.playerFacing.clone().normalize();
+    if (direction.length() === 0) {
+      direction.set(1, 0);
+    }
+    this.playerInvulnerability = Math.max(this.playerInvulnerability, this.moveConfig.dashIFrames);
+    this.player.body.checkCollision.none = true;
+    this.player.setVelocity(direction.x * this.moveConfig.dashSpeed, direction.y * 40 - 40);
+  }
+
+  finishDash() {
+    if (!this.isDashing) return;
+    this.isDashing = false;
+    this.player.body.checkCollision.none = false;
+  }
+
+  handleGlitchSkill(skill) {
+    switch (skill.key) {
+      case 'echoWarp':
+        this.activateEchoWarp(skill);
+        break;
+      case 'phaseBreak':
+        this.activatePhaseBreak(skill);
+        break;
+      case 'fractalDash':
+        this.activateFractalDash(skill);
+        break;
+      case 'staticStorm':
+        this.activateStaticStorm(skill);
+        break;
+      case 'realityShift':
+        this.activateRealityShift(skill);
+        break;
+      default:
+        break;
+    }
+  }
+
+  activateEchoWarp(skill) {
+    const repeats = Math.max(1, Math.floor(skill.duration / skill.trailInterval));
+    this.time.addEvent({
+      delay: skill.trailInterval * 1000,
+      repeat: repeats,
+      callback: () => {
+        const afterimage = this.add.sprite(this.player.x, this.player.y, 'player');
+        afterimage.setAlpha(0.65);
+        afterimage.setTint(0x9af0ff);
+        afterimage.setDepth(1);
+        this.tweens.add({ targets: afterimage, alpha: 0, duration: 420, ease: 'Sine.easeOut', onComplete: () => afterimage.destroy() });
+        this.enemyInstances.forEach((enemy) => {
+          if (enemy.health <= 0) return;
+          if (Phaser.Math.Distance.Between(this.player.x, this.player.y, enemy.sprite.x, enemy.sprite.y) <= 100) {
+            this.damageEnemy(enemy, skill.damage);
+          }
+        });
+      }
+    });
+  }
+
+  activatePhaseBreak(skill) {
+    if (this.phaseBreakActive) return;
+    this.phaseBreakActive = true;
+    this.phaseBreakFactor = skill.worldSlow;
+    this.physics.world.timeScale = skill.worldSlow;
+    this.time.timeScale = skill.worldSlow;
+    this.time.delayedCall(skill.duration * 1000, () => {
+      this.phaseBreakActive = false;
+      this.phaseBreakFactor = 1;
+      this.physics.world.timeScale = 1;
+      this.time.timeScale = 1;
+    });
+  }
+
+  activateFractalDash(skill) {
+    const direction = this.playerFacing.clone().normalize();
+    if (direction.length() === 0) {
+      direction.set(1, 0);
+    }
+    const destinationX = Phaser.Math.Clamp(this.player.x + direction.x * skill.distance, 32, 928);
+    const destinationY = Phaser.Math.Clamp(this.player.y + direction.y * 16, 32, 520);
+    this.player.setPosition(destinationX, destinationY);
+    this.playerInvulnerability = Math.max(this.playerInvulnerability, 0.35);
+    this.player.body.checkCollision.none = true;
+    this.time.delayedCall(200, () => { this.player.body.checkCollision.none = false; });
+    this.createAoeDamage(destinationX, destinationY, skill.aoeRadius, skill.aoeDamage);
+  }
+
+  createAoeDamage(x, y, radius, damage) {
+    const circle = this.add.circle(x, y, radius, 0x9af0ff, 0.15).setDepth(1);
+    this.tweens.add({ targets: circle, alpha: 0, scale: 1.2, duration: 360, onComplete: () => circle.destroy() });
+    this.enemyInstances.forEach((enemy) => {
+      if (enemy.health <= 0) return;
+      if (Phaser.Math.Distance.Between(x, y, enemy.sprite.x, enemy.sprite.y) <= radius) {
+        this.damageEnemy(enemy, damage);
+      }
+    });
+  }
+
+  activateStaticStorm(skill) {
+    let pulses = 0;
+    this.time.addEvent({
+      delay: skill.pulseInterval * 1000,
+      repeat: skill.pulses - 1,
+      callback: () => {
+        pulses += 1;
+        const radius = skill.radius + pulses * 20;
+        this.createAoeDamage(this.player.x, this.player.y, radius, skill.damage);
+        this.enemyInstances.forEach((enemy) => {
+          if (enemy.health <= 0) return;
+          const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, enemy.sprite.x, enemy.sprite.y);
+          if (distance <= radius) {
+            enemy.state = EnemyState.STUNNED;
+            enemy.stunnedTimer = Math.max(enemy.stunnedTimer, skill.stunDuration);
+          }
+        });
+      }
+    });
+  }
+
+  activateRealityShift(skill) {
+    this.physics.world.gravity.y = Math.abs(this.originalGravity) * skill.gravityScale;
+    this.player.setGravityY(this.physics.world.gravity.y);
+    this.player.setFlipY(true);
+    this.time.delayedCall(skill.duration * 1000, () => {
+      this.physics.world.gravity.y = this.originalGravity;
+      this.player.setGravityY(this.originalGravity);
+      this.player.setFlipY(false);
+    });
+  }
+
+  applyHitstop() {
+    const restoreWorld = this.phaseBreakActive ? this.phaseBreakFactor : 1;
+    const previousWorldScale = this.physics.world.timeScale;
+    const previousTimeScale = this.time.timeScale;
+    this.physics.world.timeScale = Math.min(previousWorldScale, 0.25);
+    this.time.timeScale = Math.min(previousTimeScale, 0.25);
+    this.time.delayedCall(this.combatConfig.hitstop * 1000, () => {
+      this.physics.world.timeScale = restoreWorld;
+      this.time.timeScale = restoreWorld;
+    });
+  }
+
   performMeleeAttack() {
-    const range = 64;
+    const combo = this.combatConfig.meleeCombo[this.comboIndex] ?? this.combatConfig.meleeCombo[0];
+    this.playerMeleeCooldown = combo.cooldown;
+    this.comboIndex = (this.comboIndex + 1) % this.combatConfig.meleeCombo.length;
+    this.comboTimer = this.combatConfig.meleeResetTime;
+    const range = combo.range ?? 64;
     const verticalTolerance = 48;
-    this.add.tween({ targets: this.player, scaleX: 1.1, scaleY: 0.9, yoyo: true, duration: 120 });
+    this.add.tween({ targets: this.player, scaleX: 1.1, scaleY: 0.9, yoyo: true, duration: 140 });
     this.playSfx('melee');
     for (const enemy of this.enemyInstances) {
       if (enemy.health <= 0) continue;
@@ -665,7 +936,7 @@ export default class MainScene extends Phaser.Scene {
       );
       const verticalDiff = Math.abs(this.player.y - enemy.sprite.y);
       if (distance <= range && verticalDiff <= verticalTolerance) {
-        this.damageEnemy(enemy, this.playerStats.meleeDamage);
+        this.damageEnemy(enemy, combo.damage ?? this.playerStats.meleeDamage);
       }
     }
   }
@@ -687,23 +958,24 @@ export default class MainScene extends Phaser.Scene {
   }
 
   useGlitchSkill() {
-    if (!this.glitchSkill || this.playerGlitchCooldown > 0) return;
-    this.playerGlitchCooldown = this.glitchSkill.cooldown;
-    this.time.delayedCall(200, () => this.cameras.main.shake(120, 0.01));
-    const freezeDuration = 2.2;
-    for (const enemy of this.enemyInstances) {
-      if (enemy.health <= 0) continue;
-      enemy.state = EnemyState.STUNNED;
-      enemy.stunnedTimer = freezeDuration;
-      enemy.sprite.setTint(0x7cf2ff);
-      enemy.sprite.setVelocity(0, 0);
+    if (!this.glitchManager) return;
+    const skill = this.glitchManager.getActiveSkill();
+    if (!skill) return;
+    if (this.playerGlitchCooldown > 0) return;
+    if (this.glitchManager.useActiveSkill()) {
+      this.playerGlitchCooldown = skill.cooldown;
+      this.playSfx('glitch');
     }
-    this.playSfx('glitch');
   }
 
   updateGlitchSkill(deltaSeconds) {
-    if (!this.glitchSkill) return;
-    this.playerGlitchCooldown = Math.max(0, this.playerGlitchCooldown - deltaSeconds);
+    if (!this.glitchManager) return;
+    const skill = this.glitchManager.getActiveSkill();
+    if (skill) {
+      this.playerGlitchCooldown = Math.max(0, skill.remaining ?? 0);
+    } else {
+      this.playerGlitchCooldown = 0;
+    }
   }
 
   updateProjectiles(deltaSeconds) {
@@ -724,6 +996,24 @@ export default class MainScene extends Phaser.Scene {
         projectile.destroy();
       } else {
         projectile.setData('ttl', ttl);
+      }
+    });
+  }
+
+  updatePickups(_deltaSeconds) {
+    const magnetRadius = this.pickupConfig.gemMagnetRadius;
+    this.gemsGroup.children.iterate((gem) => {
+      if (!gem) return;
+      const distance = Phaser.Math.Distance.Between(gem.x, gem.y, this.player.x, this.player.y);
+      if (distance <= magnetRadius) {
+        this.physics.moveToObject(gem, this.player, 220);
+      }
+    });
+    this.healthOrbsGroup.children.iterate((orb) => {
+      if (!orb) return;
+      const distance = Phaser.Math.Distance.Between(orb.x, orb.y, this.player.x, this.player.y);
+      if (distance <= magnetRadius * 0.8) {
+        this.physics.moveToObject(orb, this.player, 200);
       }
     });
   }
@@ -890,5 +1180,16 @@ export default class MainScene extends Phaser.Scene {
       bossLine,
       glitchLine,
     ].filter(Boolean));
+    emitHudUpdate({
+      health: this.playerStats.health,
+      maxHealth: this.playerStats.maxHealth,
+      gems: this.gems,
+      meleeRemaining: this.playerMeleeCooldown,
+      rangedRemaining: this.playerRangedCooldown,
+      dashRemaining: this.dashCooldown,
+      weapon: this.playerStats.weaponName,
+      score: this.score,
+      timer: this.elapsedTime,
+    });
   }
 }

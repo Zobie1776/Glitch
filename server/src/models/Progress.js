@@ -10,7 +10,19 @@ const progressSchema = new mongoose.Schema({
   },
   inventory: {
     consumables: [{ id: String, quantity: Number }],
-    upgrades: [{ id: String, level: Number }]
+    upgrades: [{ id: String, level: Number }],
+    gear: {
+      helm: { type: Object, default: () => ({}) },
+      body: { type: Object, default: () => ({}) },
+      gloves: { type: Object, default: () => ({}) },
+      leggings: { type: Object, default: () => ({}) },
+      accessory: { type: Object, default: () => ({}) }
+    }
+  },
+  unlockedGlitchSkills: [{ type: String }],
+  cosmetics: {
+    equippedSkin: { type: String, default: 'default-rift-runner' },
+    trail: { type: String, default: 'standard' }
   }
 }, { timestamps: true });
 
@@ -21,6 +33,8 @@ progressSchema.statics.saveSnapshot = async function saveSnapshot(userId, payloa
   if (typeof payload.gems !== 'undefined') update.gems = payload.gems;
   if (payload.stats) update.stats = payload.stats;
   if (payload.inventory) update.inventory = payload.inventory;
+  if (payload.unlockedGlitchSkills) update.unlockedGlitchSkills = payload.unlockedGlitchSkills;
+  if (payload.cosmetics) update.cosmetics = payload.cosmetics;
 
   return this.findOneAndUpdate(
     { userId },

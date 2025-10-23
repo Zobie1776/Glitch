@@ -68,6 +68,7 @@ export function AuthProvider({ children }) {
   }, [setSession]);
 
   const logout = useCallback(() => {
+    apiClient('/auth/logout', { method: 'POST' }).catch(() => {});
     localStorage.removeItem('authToken');
     localStorage.removeItem('authUser');
     setToken(null);

@@ -31,6 +31,12 @@ export default {
   stripe: {
     publicKey: process.env.STRIPE_PUBLIC_KEY || '',
     secretKey: process.env.STRIPE_SECRET_KEY || '',
-    webhookSecret: process.env.STRIPE_WEBHOOK_SECRET || ''
+    webhookSecret: process.env.STRIPE_WEBHOOK_SECRET || '',
+    gemProducts: {
+      small: process.env.STRIPE_PRICE_GEM_SMALL || '',
+      medium: process.env.STRIPE_PRICE_GEM_MEDIUM || '',
+      large: process.env.STRIPE_PRICE_GEM_LARGE || ''
+    },
+    subscriptionPriceId: process.env.STRIPE_SUBSCRIPTION_PRICE || ''
   }
 };
