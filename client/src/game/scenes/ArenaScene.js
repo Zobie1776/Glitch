@@ -6,6 +6,7 @@ import FastEnemy from '../entities/enemies/FastEnemy.js';
 import HeavyEnemy from '../entities/enemies/HeavyEnemy.js';
 import HUD from '../ui/HUD.js';
 import GlitchCooldownUI from '../ui/GlitchCooldownUI.js';
+import MobileControls from '../ui/MobileControls.js';
 import { GAME_WIDTH, GAME_HEIGHT, ARENA_DURATION } from '../constants.js';
 import { scaleEnemyConfig, ENEMY_CONFIGS } from '../data/enemyConfig.js';
 
@@ -71,6 +72,7 @@ export default class ArenaScene extends Phaser.Scene {
     // UI
     this.hud = new HUD(this, this.player);
     this.glitchUI = new GlitchCooldownUI(this, this.glitchSystem);
+    this.mobileControls = new MobileControls(this);
 
     // Arena timer
     this._buildTimerUI();
@@ -120,13 +122,16 @@ export default class ArenaScene extends Phaser.Scene {
       this._spawnWave();
     }
 
-    // Input
-    const left = this.cursors.left.isDown || this.wasd.A.isDown;
-    const right = this.cursors.right.isDown || this.wasd.D.isDown;
+    // Input (keyboard + mobile)
+    const mob = this.mobileControls.getInput();
+    const left = this.cursors.left.isDown || this.wasd.A.isDown || mob.left;
+    const right = this.cursors.right.isDown || this.wasd.D.isDown || mob.right;
     const jumpJustPressed = Phaser.Input.Keyboard.JustDown(this.cursors.up)
       || Phaser.Input.Keyboard.JustDown(this.wasd.W)
-      || Phaser.Input.Keyboard.JustDown(this.cursors.space);
-    const attackJustPressed = Phaser.Input.Keyboard.JustDown(this.attackKey);
+      || Phaser.Input.Keyboard.JustDown(this.cursors.space)
+      || mob.jumpJustPressed;
+    const attackJustPressed = Phaser.Input.Keyboard.JustDown(this.attackKey)
+      || mob.attackJustPressed;
 
     this.player.update(delta, { left, right, jumpJustPressed, attackJustPressed });
 
@@ -135,6 +140,7 @@ export default class ArenaScene extends Phaser.Scene {
     });
 
     this.glitchSystem.update(dt);
+    this.mobileControls.updateGlitchState(this.glitchSystem);
     this.enemies.getChildren().forEach(e => {
       if (e.active && !e.isDying) e.updateAI(time, delta, this.player, this.platforms);
     });
@@ -245,6 +251,14 @@ export default class ArenaScene extends Phaser.Scene {
     });
     // First wave on start
     this.time.delayedCall(500, () => this._spawnWave());
+  }
+
+  shutdown() {
+    this.events.off('enemy:died', null, this);
+    this.events.off('enemy:loot', null, this);
+    if (this.hud) this.hud.destroy();
+    if (this.glitchUI) this.glitchUI.destroy();
+    if (this.mobileControls) this.mobileControls.destroy();
   }
 
   _victory() {

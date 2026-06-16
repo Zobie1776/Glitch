@@ -7,6 +7,7 @@ import AudioSystem from '../systems/AudioSystem.js';
 import HUD from '../ui/HUD.js';
 import GlitchCooldownUI from '../ui/GlitchCooldownUI.js';
 import BossHealthBar from '../ui/BossHealthBar.js';
+import MobileControls from '../ui/MobileControls.js';
 import { GAME_WIDTH, GAME_HEIGHT, BOSS_EVERY_N } from '../constants.js';
 
 export default class GameScene extends Phaser.Scene {
@@ -78,6 +79,7 @@ export default class GameScene extends Phaser.Scene {
     this.hud = new HUD(this, this.player);
     this.glitchUI = new GlitchCooldownUI(this, this.glitchSystem);
     this.bossHealthBar = new BossHealthBar(this);
+    this.mobileControls = new MobileControls(this);
 
     // Events
     this.events.on('portal:enter', this._onPortalEnter, this);
@@ -117,13 +119,16 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
-    // Build input
-    const left = this.cursors.left.isDown || this.wasd.A.isDown;
-    const right = this.cursors.right.isDown || this.wasd.D.isDown;
+    // Build input (keyboard + mobile)
+    const mob = this.mobileControls.getInput();
+    const left = this.cursors.left.isDown || this.wasd.A.isDown || mob.left;
+    const right = this.cursors.right.isDown || this.wasd.D.isDown || mob.right;
     const jumpJustPressed = Phaser.Input.Keyboard.JustDown(this.cursors.up)
       || Phaser.Input.Keyboard.JustDown(this.wasd.W)
-      || Phaser.Input.Keyboard.JustDown(this.cursors.space);
-    const attackJustPressed = Phaser.Input.Keyboard.JustDown(this.attackKey);
+      || Phaser.Input.Keyboard.JustDown(this.cursors.space)
+      || mob.jumpJustPressed;
+    const attackJustPressed = Phaser.Input.Keyboard.JustDown(this.attackKey)
+      || mob.attackJustPressed;
 
     this.player.update(delta, { left, right, jumpJustPressed, attackJustPressed });
 
@@ -136,6 +141,7 @@ export default class GameScene extends Phaser.Scene {
 
     // Update glitch system
     this.glitchSystem.update(dt);
+    this.mobileControls.updateGlitchState(this.glitchSystem);
 
     // Update enemies
     const children = this.enemies.getChildren();
@@ -245,5 +251,6 @@ export default class GameScene extends Phaser.Scene {
     if (this.hud) this.hud.destroy();
     if (this.glitchUI) this.glitchUI.destroy();
     if (this.bossHealthBar) this.bossHealthBar.destroy();
+    if (this.mobileControls) this.mobileControls.destroy();
   }
 }
