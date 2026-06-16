@@ -1,0 +1,187 @@
+export const BOSS_CONFIGS = [
+  {
+    id: 'nullifier', name: 'NULLIFIER', level: 10,
+    color: 0xff3300, enragedColor: 0xff8800,
+    maxHealth: 600, speed: 120, width: 48, height: 56,
+    phases: [
+      {
+        threshold: 1.0,
+        name: 'Phase I',
+        attackDamage: 25, attackRange: 72, attackCooldown: 1600,
+        pattern: 'meleeCharge',
+        patternInterval: 2500,
+        description: 'Charges and swipes',
+      },
+      {
+        threshold: 0.5,
+        name: 'Phase II',
+        attackDamage: 35, attackRange: 80, attackCooldown: 1200,
+        pattern: 'rangedBurst',
+        patternInterval: 1600,
+        projectile: { damage: 18, speed: 340, count: 3, spread: 45 },
+        description: 'Fires triple shots + charges',
+      },
+    ],
+    reward: 'echoStep',
+    introText: 'THE NULLIFIER AWAKENS',
+    deathText: 'SYSTEM CORRUPTION CONTAINED... FOR NOW',
+  },
+  {
+    id: 'vectorPrime', name: 'VECTOR PRIME', level: 20,
+    color: 0xff5500, enragedColor: 0xffaa00,
+    maxHealth: 900, speed: 110, width: 52, height: 60,
+    phases: [
+      {
+        threshold: 1.0,
+        name: 'Phase I',
+        attackDamage: 20, attackRange: 120, attackCooldown: 1400,
+        pattern: 'rangedSpread',
+        patternInterval: 2100,
+        projectile: { damage: 20, speed: 360, count: 5, spread: 90 },
+        description: 'Fans of projectiles',
+      },
+      {
+        threshold: 0.5,
+        name: 'Phase II',
+        attackDamage: 28, attackRange: 120, attackCooldown: 1000,
+        pattern: 'dashAndFire',
+        patternInterval: 1300,
+        projectile: { damage: 25, speed: 480, count: 8, spread: 180 },
+        description: 'Dashes and fires spirals',
+      },
+    ],
+    reward: 'gravityFlip',
+    introText: 'VECTOR PRIME DESCENDS',
+    deathText: 'THE GRID CRACKS. YOU FEEL STRONGER.',
+  },
+  {
+    id: 'fractalArchon', name: 'FRACTAL ARCHON', level: 30,
+    color: 0xff7700, enragedColor: 0xff00aa,
+    maxHealth: 1200, speed: 150, width: 56, height: 64,
+    phases: [
+      {
+        threshold: 1.0,
+        name: 'Phase I',
+        attackDamage: 30, attackRange: 85, attackCooldown: 1600,
+        pattern: 'groundSlam',
+        patternInterval: 2800,
+        description: 'Ground slams + stomp waves',
+      },
+      {
+        threshold: 0.65,
+        name: 'Phase II',
+        attackDamage: 36, attackRange: 90, attackCooldown: 1200,
+        pattern: 'splitProjectiles',
+        patternInterval: 1800,
+        projectile: { damage: 22, speed: 380, count: 6, spread: 120 },
+        description: 'Splits and fires arcs',
+      },
+      {
+        threshold: 0.3,
+        name: 'Phase III — ENRAGED',
+        attackDamage: 44, attackRange: 100, attackCooldown: 900,
+        pattern: 'chaosAll',
+        patternInterval: 1000,
+        projectile: { damage: 30, speed: 480, count: 10, spread: 360 },
+        description: 'Full chaos — all patterns at once',
+      },
+    ],
+    reward: 'realityTear',
+    introText: 'THE FRACTAL ARCHON RISES',
+    deathText: 'REALITY ACCEPTS YOU AS ITS MASTER',
+  },
+  {
+    id: 'systemWraith', name: 'SYSTEM WRAITH', level: 40,
+    color: 0xff2200, enragedColor: 0xff0066,
+    maxHealth: 1600, speed: 160, width: 52, height: 68,
+    phases: [
+      {
+        threshold: 1.0,
+        name: 'Phase I',
+        attackDamage: 35, attackRange: 90, attackCooldown: 1400,
+        pattern: 'teleportStrike',
+        patternInterval: 2000,
+        description: 'Teleport-strikes',
+      },
+      {
+        threshold: 0.6,
+        name: 'Phase II',
+        attackDamage: 42, attackRange: 100, attackCooldown: 1100,
+        pattern: 'arenaLasers',
+        patternInterval: 1400,
+        projectile: { damage: 28, speed: 420, count: 12, spread: 360 },
+        description: 'Laser sweeps + teleports',
+      },
+      {
+        threshold: 0.3,
+        name: 'Phase III — WRAITH FORM',
+        attackDamage: 50, attackRange: 120, attackCooldown: 800,
+        pattern: 'wraith',
+        patternInterval: 900,
+        projectile: { damage: 36, speed: 540, count: 16, spread: 360 },
+        description: 'Wraith form — ethereal attacks',
+      },
+    ],
+    reward: 'timeLoop',
+    introText: 'THE SYSTEM WRAITH MANIFESTS',
+    deathText: 'THE FINAL LAYER SHATTERS BEFORE YOU.',
+  },
+  {
+    id: 'coreCollapse', name: 'CORE//COLLAPSE', level: 50,
+    color: 0xff0000, enragedColor: 0xffffff,
+    maxHealth: 2400, speed: 180, width: 64, height: 72,
+    phases: [
+      {
+        threshold: 1.0,
+        name: 'Phase I — The Shell',
+        attackDamage: 40, attackRange: 100, attackCooldown: 1400,
+        pattern: 'shellBarrage',
+        patternInterval: 2000,
+        projectile: { damage: 30, speed: 380, count: 8, spread: 200 },
+        description: 'Rapid projectile salvos',
+      },
+      {
+        threshold: 0.75,
+        name: 'Phase II — The Core',
+        attackDamage: 50, attackRange: 110, attackCooldown: 1100,
+        pattern: 'coreBeam',
+        patternInterval: 1500,
+        projectile: { damage: 38, speed: 460, count: 12, spread: 280 },
+        description: 'Core beams + barrages',
+      },
+      {
+        threshold: 0.5,
+        name: 'Phase III — Reality Breach',
+        attackDamage: 58, attackRange: 120, attackCooldown: 900,
+        pattern: 'realityBreachSpiral',
+        patternInterval: 1200,
+        projectile: { damage: 44, speed: 520, count: 16, spread: 360 },
+        description: 'Spiral volleys + reality tears',
+      },
+      {
+        threshold: 0.25,
+        name: 'Phase IV — TOTAL COLLAPSE',
+        attackDamage: 70, attackRange: 140, attackCooldown: 700,
+        pattern: 'totalCollapse',
+        patternInterval: 800,
+        projectile: { damage: 55, speed: 600, count: 20, spread: 360 },
+        description: 'Every pattern at maximum intensity',
+      },
+    ],
+    reward: 'glitchMastery',
+    introText: 'CORE//COLLAPSE — THE RIFT FIGHTS BACK',
+    deathText: 'YOU ARE THE GLITCH. YOU ARE FREE.',
+  },
+];
+
+export function getBossConfig(level) {
+  const idx = Math.floor((level - 1) / 10);
+  const base = BOSS_CONFIGS[Math.min(idx, BOSS_CONFIGS.length - 1)];
+  // Scale stats for repeated playthroughs
+  const cycle = Math.floor(idx / BOSS_CONFIGS.length);
+  const scale = 1 + cycle * 0.3;
+  return {
+    ...base,
+    maxHealth: Math.round(base.maxHealth * scale),
+  };
+}
