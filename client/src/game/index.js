@@ -1,63 +1,53 @@
 import Phaser from 'phaser';
-import MainScene from './scenes/MainScene.js';
-import { emitLevelComplete, emitPlayerDeath, onLevelComplete, onPlayerDeath } from './events.js';
-import { saveProgress } from '../state/saveManager.js';
+import BootScene from './scenes/BootScene.js';
+import PreloadScene from './scenes/PreloadScene.js';
+import MainMenuScene from './scenes/MainMenuScene.js';
+import GameScene from './scenes/GameScene.js';
+import BossIntroScene from './scenes/BossIntroScene.js';
+import ArenaScene from './scenes/ArenaScene.js';
+import LevelCompleteScene from './scenes/LevelCompleteScene.js';
+import GameOverScene from './scenes/GameOverScene.js';
+import PauseScene from './scenes/PauseScene.js';
+import { GAME_WIDTH, GAME_HEIGHT, GRAVITY } from './constants.js';
 
 let gameInstance = null;
-let cleanupHandlers = [];
 
-export async function startGame({ mountId, onSession, settings }) {
+export function startGame(mountId) {
   if (gameInstance) {
-    if (settings) {
-      gameInstance.registry.set('settings', settings);
-      gameInstance.events.emit('settings:changed', settings);
-    }
-    return gameInstance;
+    gameInstance.destroy(true);
+    gameInstance = null;
   }
 
-  const config = {
+  gameInstance = new Phaser.Game({
     type: Phaser.AUTO,
     parent: mountId,
-    width: 960,
-    height: 540,
+    width: GAME_WIDTH,
+    height: GAME_HEIGHT,
     pixelArt: true,
     backgroundColor: '#05030a',
-    fps: { target: 60, forceSetTimeOut: true },
+    physics: {
+      default: 'arcade',
+      arcade: {
+        gravity: { y: GRAVITY },
+        debug: false,
+      },
+    },
     scale: {
       mode: Phaser.Scale.FIT,
       autoCenter: Phaser.Scale.CENTER_BOTH,
     },
-    physics: {
-      default: 'arcade',
-      arcade: {
-        debug: false,
-        gravity: { y: 1000 },
-      },
-    },
-    scene: [MainScene],
-  };
-
-  gameInstance = new Phaser.Game(config);
-  if (settings) {
-    gameInstance.registry.set('settings', settings);
-  }
-
-  cleanupHandlers.push(
-    onLevelComplete(async (payload) => {
-      await saveProgress(payload);
-      onSession(payload);
-    })
-  );
-
-  cleanupHandlers.push(
-    onPlayerDeath((payload) => {
-      onSession(payload);
-    })
-  );
-
-  if (settings) {
-    gameInstance.events.emit('settings:changed', settings);
-  }
+    scene: [
+      BootScene,
+      PreloadScene,
+      MainMenuScene,
+      GameScene,
+      BossIntroScene,
+      ArenaScene,
+      LevelCompleteScene,
+      GameOverScene,
+      PauseScene,
+    ],
+  });
 
   return gameInstance;
 }
@@ -67,8 +57,4 @@ export function destroyGame() {
     gameInstance.destroy(true);
     gameInstance = null;
   }
-  cleanupHandlers.forEach((cleanup) => cleanup());
-  cleanupHandlers = [];
 }
-
-export { onLevelComplete, onPlayerDeath, emitLevelComplete, emitPlayerDeath };
